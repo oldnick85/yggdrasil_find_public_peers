@@ -106,7 +106,7 @@ def parse_md(filename : str, word_part : str, country : str) -> list[Peer]:
 
 def get_peers() -> list[Peer]:
     peers : list[Peer] = []
-    commands = f"git clone --quiet --depth 1 https://github.com/yggdrasil-network/public-peers"
+    commands = f'git clone --quiet --depth 1 "https://github.com/yggdrasil-network/public-peers"'
     current_dir = os.getcwd()
     os.chdir("/tmp")
     process = subprocess.Popen(commands, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -137,7 +137,7 @@ def ping_peers(peers : list[Peer], parallel : int, pings : int, ping_interval : 
         if ((len(processing) < parallel) and (len(waiting_peers) != 0)):
             peer = waiting_peers.pop()
             logger.debug(f"ping start {peer}")
-            commands = f"ping -c {pings} -q -i {ping_interval} {peer.address()} 2> /dev/null"
+            commands = f'ping -c {pings} -q -i {ping_interval} "{peer.address()}" 2> /dev/null'
             process = subprocess.Popen(commands, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             processing.append(ProcessingPeer(peer, process))
         time.sleep(0.1)
