@@ -1,10 +1,10 @@
 import subprocess
 import logging
-from collections import namedtuple
 import time
 import os
 import shutil
 import sys
+from dataclasses import dataclass
 
 _log_format = f"[%(asctime)s] %(message)s"
 
@@ -77,7 +77,11 @@ class Peer:
         self.__rtt_mdev = float(ping_output[rtt_mdev_pos_start:rtt_mdev_pos_end])
         return
 
-ProcessingPeer = namedtuple("ProcessingPeer", ["peer", "process"])
+@dataclass(frozen=True)
+class ProcessingPeer:
+    peer : Peer
+    process : subprocess.Popen
+
 
 def parse_md(filename : str, word_part : str, country : str) -> list[Peer]:
     peers : list[Peer] = []
