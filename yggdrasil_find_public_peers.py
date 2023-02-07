@@ -6,7 +6,7 @@ import shutil
 import sys
 from dataclasses import dataclass
 
-_log_format = f"[%(asctime)s] %(message)s"
+_log_format = f"%(name)s [%(asctime)s] %(message)s"
 
 def get_logger(name : str) -> logging.Logger:
     logger = logging.getLogger(name)
