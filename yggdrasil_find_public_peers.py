@@ -5,6 +5,7 @@ import os
 import shutil
 import sys
 from dataclasses import dataclass
+from tqdm import tqdm
 
 _log_format = f"%(name)s [%(asctime)s] %(message)s"
 
@@ -136,6 +137,8 @@ def get_peers() -> list[Peer]:
 
 def ping_peers(peers : list[Peer], parallel : int, pings : int, ping_interval : float) -> None:
     waiting_peers = peers.copy()
+    if (logger.getEffectiveLevel() == logging.INFO):
+        pbar = tqdm(total=len(waiting_peers))
     processing : list[ProcessingPeer] = []
     while ((len(waiting_peers) != 0) or (len(processing) != 0)):
         if ((len(processing) < parallel) and (len(waiting_peers) != 0)):
@@ -155,11 +158,17 @@ def ping_peers(peers : list[Peer], parallel : int, pings : int, ping_interval : 
             elif (poll != 0):
                 logger.debug(f"ping done {peer} with error")
                 peer.set_error(poll)
+                if (logger.getEffectiveLevel() == logging.INFO):
+                    pbar.update()
             else:
                 output_str = process.communicate()[0].decode("utf-8")
                 peer.parse_ping_output(output_str)
                 logger.debug(f"ping done {peer}")
+                if (logger.getEffectiveLevel() == logging.INFO):
+                    pbar.update()
         processing = processing_working
+    if (logger.getEffectiveLevel() == logging.INFO):
+        pbar.close()
     return
 
 def best_peers(peers : list[Peer], best : int) -> list[Peer]:
@@ -209,14 +218,19 @@ def main() -> None:
         type=float, default=0.1, help='Interval betveen pings for one peer in seconds')
     parser.add_argument("-v", dest='verbose', help="Print extra logs",
         action="store_true")
+    parser.add_argument("-q", dest='quiet', help="Print minimum logs",
+        action="store_true")
     parser.add_argument('--yggdrasil-conf', dest='yggdrasil_conf', metavar='YGGDRASIL_CONF', \
         type=str, default="", help='Save best peers to existing yggdrasil configuration file')
                     
     args = parser.parse_args()
-    if (args.verbose):
-        logger.setLevel(logging.DEBUG)
+    if (args.quiet):
+        logger.setLevel(logging.WARNING)
     else:
-        logger.setLevel(logging.INFO)
+        if (args.verbose):
+            logger.setLevel(logging.DEBUG)
+        else:
+            logger.setLevel(logging.INFO)
     peers = find_public_peers(parallel=args.parallel, pings=args.pings, \
                               best=args.best, ping_interval=args.ping_interval)
     if (len(peers) == 0):
