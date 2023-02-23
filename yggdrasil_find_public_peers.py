@@ -186,6 +186,12 @@ def find_public_peers(parallel : int, pings : int, best : int, ping_interval : f
         peers = best_peers(peers, best)
     return peers
 
+def yggdrasil_conf_has_peers(yggdrasil_conf_filename : str) -> bool:
+    with open(yggdrasil_conf_filename, "r") as file:
+        conf = hjson.load(file)
+    peers = conf.get("Peers", [])
+    return (len(peers) != 0)
+
 def save_to_yggdrasil_conf(yggdrasil_conf_filename : str, peers : list[Peer]) -> None:
     with open(yggdrasil_conf_filename, "r") as file:
         conf = hjson.load(file)
@@ -215,8 +221,14 @@ def main() -> None:
         action="store_true")
     parser.add_argument('--yggdrasil-conf', dest='yggdrasil_conf', metavar='YGGDRASIL_CONF', \
         type=str, default="yggdrasil.conf", help='Save best peers to existing yggdrasil configuration file')
+
     args = parser.parse_args()
 
+    if (len(args.yggdrasil_conf) != 0):
+        if (yggdrasil_conf_has_peers(args.yggdrasil_conf)):
+            logger.warning(f"config {args.yggdrasil_conf} already has not empty public peers list")
+            sys.exit(0)
+                    
     if (args.quiet):
         logger.setLevel(logging.WARNING)
     else:
