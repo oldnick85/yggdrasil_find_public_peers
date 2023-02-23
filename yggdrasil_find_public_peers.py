@@ -7,6 +7,7 @@ import sys
 from dataclasses import dataclass
 from tqdm import tqdm
 import hjson
+import argparse
 
 _log_format = f"%(name)s [%(asctime)s] %(message)s"
 
@@ -204,8 +205,7 @@ def save_to_yggdrasil_conf(yggdrasil_conf_filename : str, peers : list[Peer]) ->
         hjson.dump(conf, file)
     return
 
-def main() -> None:
-    import argparse
+def get_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Find yggdrasil public peers')
     parser.add_argument('--parallel', dest='parallel', metavar='PARALLEL', \
         type=int, default=10, help='Number of parallel ping processes')
@@ -221,14 +221,9 @@ def main() -> None:
         action="store_true")
     parser.add_argument('--yggdrasil-conf', dest='yggdrasil_conf', metavar='YGGDRASIL_CONF', \
         type=str, default="yggdrasil.conf", help='Save best peers to existing yggdrasil configuration file')
+    return parser.parse_args()
 
-    args = parser.parse_args()
-
-    if (len(args.yggdrasil_conf) != 0):
-        if (yggdrasil_conf_has_peers(args.yggdrasil_conf)):
-            logger.warning(f"config {args.yggdrasil_conf} already has not empty public peers list")
-            sys.exit(0)
-                    
+def set_logger_level(args : argparse.Namespace) -> None:
     if (args.quiet):
         logger.setLevel(logging.WARNING)
     else:
@@ -236,6 +231,18 @@ def main() -> None:
             logger.setLevel(logging.DEBUG)
         else:
             logger.setLevel(logging.INFO)
+    return
+
+def main() -> None:
+    args = get_arguments()
+
+    set_logger_level(args)
+
+    if (len(args.yggdrasil_conf) != 0):
+        if (yggdrasil_conf_has_peers(args.yggdrasil_conf)):
+            logger.warning(f"config {args.yggdrasil_conf} already has not empty public peers list")
+            sys.exit(0)
+                    
     peers = find_public_peers(parallel=args.parallel, pings=args.pings, \
                               best=args.best, ping_interval=args.ping_interval)
     if (len(peers) == 0):
