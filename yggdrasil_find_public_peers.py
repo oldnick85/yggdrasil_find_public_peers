@@ -6,6 +6,7 @@ import shutil
 import sys
 from dataclasses import dataclass
 from tqdm import tqdm
+import hjson
 
 _log_format = f"%(name)s [%(asctime)s] %(message)s"
 
@@ -82,7 +83,6 @@ class Peer:
 class ProcessingPeer:
     peer : Peer
     process : subprocess.Popen
-
 
 def parse_md(filename : str, word_part : str, country : str) -> list[Peer]:
     peers : list[Peer] = []
@@ -188,21 +188,14 @@ def find_public_peers(parallel : int, pings : int, best : int, ping_interval : f
 
 def save_to_yggdrasil_conf(yggdrasil_conf_filename : str, peers : list[Peer]) -> None:
     with open(yggdrasil_conf_filename, "r") as file:
-        contents = file.readlines()
+        conf = hjson.load(file)
 
-    new_contents : list[str] = []
-    for line in contents:
-        if (line.find("Peers: []") != -1):
-            new_contents.append("  Peers: [\n")
-            for peer in peers:
-                new_contents.append(f"    {peer.url()}\n")
-            new_contents.append("  ]\n")
-        else:
-            new_contents.append(line)
+    conf["Peers"] = []
+    for peer in peers:
+        conf["Peers"].append(peer.url())
 
     with open(yggdrasil_conf_filename, "w") as file:
-        new_content = "".join(new_contents)
-        file.write(new_content)
+        hjson.dump(conf, file)
     return
 
 def main() -> None:
@@ -221,9 +214,9 @@ def main() -> None:
     parser.add_argument("-q", dest='quiet', help="Print minimum logs",
         action="store_true")
     parser.add_argument('--yggdrasil-conf', dest='yggdrasil_conf', metavar='YGGDRASIL_CONF', \
-        type=str, default="", help='Save best peers to existing yggdrasil configuration file')
-                    
+        type=str, default="yggdrasil.conf", help='Save best peers to existing yggdrasil configuration file')
     args = parser.parse_args()
+
     if (args.quiet):
         logger.setLevel(logging.WARNING)
     else:
@@ -240,7 +233,7 @@ def main() -> None:
         logger.info(f"best peers:")
         for peer in peers:
             logger.info(f"  {peer}")
-        if (args.yggdrasil_conf != 0):
+        if (len(args.yggdrasil_conf) != 0):
             try:
                 save_to_yggdrasil_conf(args.yggdrasil_conf, peers)
             except:
