@@ -1,4 +1,5 @@
 yggdrasil.conf
+yggdrasil-peers.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

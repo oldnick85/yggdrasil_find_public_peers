@@ -7,6 +7,7 @@ import sys
 from dataclasses import dataclass
 from tqdm import tqdm
 import hjson
+import json
 import argparse
 import re
 
@@ -30,6 +31,7 @@ class Settings:
     best_count : int = 0
     ping_interval : float = 0
     rewrite_config_peers : bool = False
+    yggdrasil_peers_json : str = ""
 
 @dataclass(frozen=True)
 class PeerData:
@@ -103,7 +105,33 @@ def parse_md(filename : str, word_part : str, country : str) -> list[PeerData]:
                 peers.append(PeerData(address, url, word_part, country))
     return peers
 
-def get_peers() -> list[PeerData]:
+def get_peers_from_json(json_filename : str) -> list[PeerData]:
+    peers : list[PeerData] = []
+    if (len(json_filename) == 0):
+        return peers
+    with open(json_filename, "r") as file:
+        json_data = json.load(file)
+    peers_data = json_data["yggdrasil_peers"]
+    for peer_data in peers_data:
+        peer = PeerData(address=peer_data["address"], url=peer_data["url"], \
+                        world_part=peer_data["world_part"], country=peer_data["country"])
+        peers.append(peer)
+    return peers
+
+def save_peers_to_json(json_filename : str, peers : list[PeerData]) -> None:
+    if (len(json_filename) == 0):
+        return
+    peers_data = []
+    for peer in peers:
+        peer_data = {"address" : peer.address, "url" : peer.url, \
+                     "world_part" : peer.world_part, "country" : peer.country}
+        peers_data.append(peer_data)
+    json_data  = {"yggdrasil_peers" : peers_data}
+    with open(json_filename, "w") as file:
+        json.dump(json_data, file)
+    return
+
+def get_peers_from_git() -> list[PeerData]:
     peers : list[PeerData] = []
     commands = f'git clone --quiet --depth 1 "https://github.com/yggdrasil-network/public-peers"'
     current_dir = os.getcwd()
@@ -178,7 +206,11 @@ def best_peers(ping_statistics : list[PeerStatistic], best : int) -> list[PeerSt
 
 def find_public_peers(settings : Settings) -> list[PeerData]:
     logger.info(f"find public peers with {settings}")
-    peers = get_peers()
+    peers = get_peers_from_git()
+    if (len(peers) == 0):
+        peers = get_peers_from_json(settings.yggdrasil_peers_json)
+    else:
+        save_peers_to_json(settings.yggdrasil_peers_json, peers)
     if (len(peers) != 0):
         ping_statistic = ping_peers(peers, settings)
         peers = best_peers(ping_statistic, settings.best_count)
@@ -220,6 +252,8 @@ def get_arguments() -> argparse.Namespace:
         action="store_true")
     parser.add_argument('--yggdrasil-conf', dest='yggdrasil_conf', metavar='YGGDRASIL_CONF', \
         type=str, default="yggdrasil.conf", help='Save best peers to existing yggdrasil configuration file')
+    parser.add_argument('--yggdrasil-peers-json', dest='yggdrasil_peers_json', metavar='YGGDRASIL_PEERS_JSON', \
+        type=str, default="", help='Save all peers from git to file')
     return parser.parse_args()
 
 def set_logger_level(args : argparse.Namespace) -> None:
@@ -239,7 +273,8 @@ def main() -> None:
 
     settings = Settings(parallel=args.parallel, pings=args.pings, \
                         best_count=args.best, ping_interval=args.ping_interval, \
-                        rewrite_config_peers=args.rewrite_config_peers)
+                        rewrite_config_peers=args.rewrite_config_peers, \
+                        yggdrasil_peers_json=args.yggdrasil_peers_json)
     if (len(args.yggdrasil_conf) != 0):
         if (not settings.rewrite_config_peers):
             if (yggdrasil_conf_has_peers(args.yggdrasil_conf)):
