@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from tqdm import tqdm
 import hjson
 import argparse
+import re
 
 _log_format = f"%(name)s [%(asctime)s] %(message)s"
 
@@ -22,96 +23,80 @@ def get_logger(name : str) -> logging.Logger:
 
 logger = get_logger("YFPP")
 
-class Peer:
-    def __init__(self, address : str, url : str, world_part : str, country : str) -> None:
-        self.__address = address
-        self.__url = url
-        self.__word_part = world_part
-        self.__country = country
-        self.__packet_loss = -1
-        self.__rtt_min = 0.0
-        self.__rtt_avg = 0.0
-        self.__rtt_max = 0.0
-        self.__rtt_mdev = 0.0
-        self.__error = 0
-        return
+@dataclass(frozen=True)
+class PeerData:
+    address : str
+    url : str
+    world_part : str
+    country : str
+
+    def __str__(self) -> str:
+        s = f"{self.address} ({self.world_part}/{self.country})"
+        return s
+
+@dataclass(frozen=False)
+class PeerStatistic:
+    peer : PeerData
+    packet_loss : int = -1
+    rtt_min : float = 0.0
+    rtt_avg : float = 0.0
+    rtt_max : float = 0.0
+    rtt_mdev : float = 0.0
+    error : int = 0
 
     def __lt__(self, other) -> bool:
-        lesser = (self.__rtt_avg < other.__rtt_avg)
+        lesser = (self.rtt_avg < other.rtt_avg)
         return lesser
 
     def __str__(self) -> str:
-        s = f"{self.__address} ({self.__word_part}/{self.__country})"
-        if (self.__packet_loss >= 0):
-            s += f" loss={self.__packet_loss} min={self.__rtt_min} avg={self.__rtt_avg} max={self.__rtt_max} mdev={self.__rtt_mdev}"
+        s = f"{self.peer}"
+        if (self.packet_loss >= 0):
+            s += f" loss={self.packet_loss} min={self.rtt_min} avg={self.rtt_avg} max={self.rtt_max} mdev={self.rtt_mdev}"
         return s
 
-    def set_error(self, err : int) -> None:
-        self.__error = err
-        return
-
-    def address(self) -> str:
-        return self.__address
-
-    def url(self) -> str:
-        return self.__url
-
     def ping_success(self) -> bool:
-        return (self.__error == 0)
+        return (self.error == 0)
 
     def parse_ping_output(self, ping_output : str) -> None:
-        packet_loss_str = "packet loss"
-        packet_loss_pos_end = ping_output.find(packet_loss_str)-2
-        packet_loss_pos_start = ping_output.rfind(",", 0, packet_loss_pos_end)
-        self.__packet_loss = int(ping_output[packet_loss_pos_start+2:packet_loss_pos_end])
-        rtt_str = "rtt min/avg/max/mdev = "
-        rtt_pos_start = ping_output.find(rtt_str) + len(rtt_str)
-        rtt_min_pos_start = rtt_pos_start
-        rtt_min_pos_end = ping_output.find("/", rtt_min_pos_start)
-        self.__rtt_min = float(ping_output[rtt_min_pos_start:rtt_min_pos_end])
-        rtt_avg_pos_start = rtt_min_pos_end + 1
-        rtt_avg_pos_end = ping_output.find("/", rtt_avg_pos_start)
-        self.__rtt_avg = float(ping_output[rtt_avg_pos_start:rtt_avg_pos_end])
-        rtt_max_pos_start = rtt_avg_pos_end + 1
-        rtt_max_pos_end = ping_output.find("/", rtt_max_pos_start)
-        self.__rtt_max = float(ping_output[rtt_max_pos_start:rtt_max_pos_end])
-        rtt_mdev_pos_start = rtt_max_pos_end + 1
-        rtt_mdev_pos_end = ping_output.find(" ", rtt_mdev_pos_start)
-        self.__rtt_mdev = float(ping_output[rtt_mdev_pos_start:rtt_mdev_pos_end])
+        m_rtt = re.search(r"\s*rtt min\/avg\/max\/mdev = (\d[\d.]+)\/(\d[\d.]+)\/(\d[\d.]+)\/(\d[\d.]+)\s*ms", ping_output)
+        m_loss = re.search(r"(\d+)% packet loss", ping_output)
+        if (not (m_rtt and m_loss)):
+            logger.debug(f"cant parse ping output: {ping_output}")
+            self.error = -1
+            return
+        self.rtt_min = float(m_rtt.group(1))
+        self.rtt_avg = float(m_rtt.group(2))
+        self.rtt_max = float(m_rtt.group(3))
+        self.rtt_mdev = float(m_rtt.group(4))
+        self.packet_loss = int(m_loss.group(1))
         return
 
 @dataclass(frozen=True)
 class ProcessingPeer:
-    peer : Peer
+    peer_statistic : PeerStatistic
     process : subprocess.Popen
 
-def parse_md(filename : str, word_part : str, country : str) -> list[Peer]:
-    peers : list[Peer] = []
+def parse_md_line(s : str) -> list[str] | None:
+    m = re.search(r"\s*\* `(tls:\/\/|tcp:\/\/)([\d\.\[\]a-zA-Z:-]+)(:\d+.*)`", s)
+    if (m):
+        url = m.group(1) + m.group(2) + m.group(3)
+        address = m.group(2).strip("[]")
+        return [url, address]
+    return None
+
+def parse_md(filename : str, word_part : str, country : str) -> list[PeerData]:
+    peers : list[PeerData] = []
     with open(filename, 'r', encoding='UTF-8') as file:
         for line in file:
             s = line.rstrip()
-            start_pos = s.find("* `tls://")
-            if (start_pos == -1):
-                start_pos = s.find("* `tcp://")
-            if (start_pos == -1):
-                continue
-            url_start = start_pos + 3
-            start_pos += 9
-            url_end = s.rfind("`")
-            end_pos = s.rfind(":")
-            if ((end_pos == -1) or (url_end == -1)):
-                continue
-            if (s[start_pos] == "["):
-                start_pos += 1
-            if (s[end_pos-1] == "]"):
-                end_pos -= 1
-            address = s[start_pos:end_pos]
-            url = s[url_start:url_end]
-            peers.append(Peer(address, url, word_part, country))
+            ua = parse_md_line(s)
+            if (ua):
+                url, address = ua
+                peers.append(PeerData(address, url, word_part, country))
     return peers
 
-def get_peers() -> list[Peer]:
-    peers : list[Peer] = []
+def get_peers() -> list[PeerData]:
+    peers : list[PeerData] = []
     commands = f'git clone --quiet --depth 1 "https://github.com/yggdrasil-network/public-peers"'
     current_dir = os.getcwd()
     os.chdir("/tmp")
@@ -136,55 +121,59 @@ def get_peers() -> list[Peer]:
     logger.info(f"got {len(peers)} public peers")
     return peers
 
-def ping_peers(peers : list[Peer], parallel : int, pings : int, ping_interval : float) -> None:
-    waiting_peers = peers.copy()
+def ping_peers(peers : list[PeerData], parallel : int, pings : int, ping_interval : float) -> list[PeerStatistic]:
+    ping_statistic = [PeerStatistic(peer=p) for p in peers]
+    ping_waiting = ping_statistic.copy()
     if (logger.getEffectiveLevel() == logging.INFO):
-        pbar = tqdm(total=len(waiting_peers))
+        pbar = tqdm(total=len(ping_waiting))
     processing : list[ProcessingPeer] = []
-    while ((len(waiting_peers) != 0) or (len(processing) != 0)):
-        if ((len(processing) < parallel) and (len(waiting_peers) != 0)):
-            peer = waiting_peers.pop()
-            logger.debug(f"ping start {peer}")
-            commands = f'ping -c {pings} -q -i {ping_interval} "{peer.address()}" 2> /dev/null'
+    while ((len(ping_waiting) != 0) or (len(processing) != 0)):
+        if ((len(processing) < parallel) and (len(ping_waiting) != 0)):
+            peer_stat = ping_waiting.pop()
+            logger.debug(f"ping start {peer_stat}")
+            commands = f'ping -c {pings} -q -i {ping_interval} "{peer_stat.peer.address}" 2> /dev/null'
             process = subprocess.Popen(commands, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            processing.append(ProcessingPeer(peer, process))
+            processing.append(ProcessingPeer(peer_stat, process))
         time.sleep(0.1)
         processing_working : list[ProcessingPeer] = []
         for p in processing:
             process = p.process
-            peer = p.peer
+            peer_stat = p.peer_statistic
             poll = process.poll()
             if (poll is None):
                 processing_working.append(p)
             elif (poll != 0):
-                logger.debug(f"ping done {peer} with error")
-                peer.set_error(poll)
+                logger.debug(f"ping done {peer_stat} with error")
+                peer_stat.error = poll
                 if (logger.getEffectiveLevel() == logging.INFO):
                     pbar.update()
             else:
                 output_str = process.communicate()[0].decode("utf-8")
-                peer.parse_ping_output(output_str)
-                logger.debug(f"ping done {peer}")
+                peer_stat.parse_ping_output(output_str)
+                logger.debug(f"ping done {peer_stat}")
                 if (logger.getEffectiveLevel() == logging.INFO):
                     pbar.update()
         processing = processing_working
     if (logger.getEffectiveLevel() == logging.INFO):
         pbar.close()
-    return
+    return ping_statistic
 
-def best_peers(peers : list[Peer], best : int) -> list[Peer]:
-    best_peers = [peer for peer in peers if peer.ping_success()]
+def best_peers(ping_statistics : list[PeerStatistic], best : int) -> list[PeerStatistic]:
+    best_peers = [ping_statistic for ping_statistic in ping_statistics if ping_statistic.ping_success()]
     logger.info(f"success ping {len(best_peers)} peers")
     best_peers.sort()
     best_peers = best_peers[0:best]
-    return best_peers
+    logger.debug(f"found {len(best_peers)} best pings")
+    for best_peer in best_peers:
+        logger.debug(f"  {best_peer}")
+    return [p.peer for p in best_peers]
 
-def find_public_peers(parallel : int, pings : int, best : int, ping_interval : float) -> list[Peer]:
-    logger.info(f"find public peers with parallel={parallel} pings_count={pings} best_count={best} ping_interval={ping_interval}")
+def find_public_peers(parallel : int, pings : int, best_count : int, ping_interval : float) -> list[PeerData]:
+    logger.info(f"find public peers with parallel={parallel} pings_count={pings} best_count={best_count} ping_interval={ping_interval}")
     peers = get_peers()
     if (len(peers) != 0):
-        ping_peers(peers, parallel, pings, ping_interval)
-        peers = best_peers(peers, best)
+        ping_statistic = ping_peers(peers, parallel, pings, ping_interval)
+        peers = best_peers(ping_statistic, best_count)
     return peers
 
 def yggdrasil_conf_has_peers(yggdrasil_conf_filename : str) -> bool:
@@ -193,13 +182,13 @@ def yggdrasil_conf_has_peers(yggdrasil_conf_filename : str) -> bool:
     peers = conf.get("Peers", [])
     return (len(peers) != 0)
 
-def save_to_yggdrasil_conf(yggdrasil_conf_filename : str, peers : list[Peer]) -> None:
+def save_to_yggdrasil_conf(yggdrasil_conf_filename : str, peers : list[PeerData]) -> None:
     with open(yggdrasil_conf_filename, "r") as file:
         conf = hjson.load(file)
 
-    conf["Peers"] = []
+    conf["Peers"] : list[str] = []
     for peer in peers:
-        conf["Peers"].append(peer.url())
+        conf["Peers"].append(peer.url)
 
     with open(yggdrasil_conf_filename, "w") as file:
         hjson.dump(conf, file)
@@ -244,7 +233,7 @@ def main() -> None:
             sys.exit(0)
                     
     peers = find_public_peers(parallel=args.parallel, pings=args.pings, \
-                              best=args.best, ping_interval=args.ping_interval)
+                              best_count=args.best, ping_interval=args.ping_interval)
     if (len(peers) == 0):
         logger.info(f"peers not found")
         sys.exit(1)
