@@ -24,6 +24,14 @@ def get_logger(name : str) -> logging.Logger:
 logger = get_logger("YFPP")
 
 @dataclass(frozen=True)
+class Settings:
+    parallel : int = 0
+    pings : int = 0
+    best_count : int = 0
+    ping_interval : float = 0
+    rewrite_config_peers : bool = False
+
+@dataclass(frozen=True)
 class PeerData:
     address : str
     url : str
@@ -121,17 +129,17 @@ def get_peers() -> list[PeerData]:
     logger.info(f"got {len(peers)} public peers")
     return peers
 
-def ping_peers(peers : list[PeerData], parallel : int, pings : int, ping_interval : float) -> list[PeerStatistic]:
+def ping_peers(peers : list[PeerData], settings : Settings) -> list[PeerStatistic]:
     ping_statistic = [PeerStatistic(peer=p) for p in peers]
     ping_waiting = ping_statistic.copy()
     if (logger.getEffectiveLevel() == logging.INFO):
         pbar = tqdm(total=len(ping_waiting))
     processing : list[ProcessingPeer] = []
     while ((len(ping_waiting) != 0) or (len(processing) != 0)):
-        if ((len(processing) < parallel) and (len(ping_waiting) != 0)):
+        if ((len(processing) < settings.parallel) and (len(ping_waiting) != 0)):
             peer_stat = ping_waiting.pop()
             logger.debug(f"ping start {peer_stat}")
-            commands = f'ping -c {pings} -q -i {ping_interval} "{peer_stat.peer.address}" 2> /dev/null'
+            commands = f'ping -c {settings.pings} -q -i {settings.ping_interval} "{peer_stat.peer.address}" 2> /dev/null'
             process = subprocess.Popen(commands, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             processing.append(ProcessingPeer(peer_stat, process))
         time.sleep(0.1)
@@ -168,12 +176,12 @@ def best_peers(ping_statistics : list[PeerStatistic], best : int) -> list[PeerSt
         logger.debug(f"  {best_peer}")
     return [p.peer for p in best_peers]
 
-def find_public_peers(parallel : int, pings : int, best_count : int, ping_interval : float) -> list[PeerData]:
-    logger.info(f"find public peers with parallel={parallel} pings_count={pings} best_count={best_count} ping_interval={ping_interval}")
+def find_public_peers(settings : Settings) -> list[PeerData]:
+    logger.info(f"find public peers with {settings}")
     peers = get_peers()
     if (len(peers) != 0):
-        ping_statistic = ping_peers(peers, parallel, pings, ping_interval)
-        peers = best_peers(ping_statistic, best_count)
+        ping_statistic = ping_peers(peers, settings)
+        peers = best_peers(ping_statistic, settings.best_count)
     return peers
 
 def yggdrasil_conf_has_peers(yggdrasil_conf_filename : str) -> bool:
@@ -208,6 +216,8 @@ def get_arguments() -> argparse.Namespace:
         action="store_true")
     parser.add_argument("-q", dest='quiet', help="Print minimum logs",
         action="store_true")
+    parser.add_argument("--rewrite-config-peers", dest='rewrite_config_peers', help="Rewrite existing peers in config",
+        action="store_true")
     parser.add_argument('--yggdrasil-conf', dest='yggdrasil_conf', metavar='YGGDRASIL_CONF', \
         type=str, default="yggdrasil.conf", help='Save best peers to existing yggdrasil configuration file')
     return parser.parse_args()
@@ -227,13 +237,15 @@ def main() -> None:
 
     set_logger_level(args)
 
+    settings = Settings(parallel=args.parallel, pings=args.pings, \
+                        best_count=args.best, ping_interval=args.ping_interval, \
+                        rewrite_config_peers=args.rewrite_config_peers)
     if (len(args.yggdrasil_conf) != 0):
-        if (yggdrasil_conf_has_peers(args.yggdrasil_conf)):
-            logger.warning(f"config {args.yggdrasil_conf} already has not empty public peers list")
-            sys.exit(0)
-                    
-    peers = find_public_peers(parallel=args.parallel, pings=args.pings, \
-                              best_count=args.best, ping_interval=args.ping_interval)
+        if (not settings.rewrite_config_peers):
+            if (yggdrasil_conf_has_peers(args.yggdrasil_conf)):
+                logger.warning(f"config {args.yggdrasil_conf} already has not empty public peers list")
+                sys.exit(0)
+    peers = find_public_peers(settings)
     if (len(peers) == 0):
         logger.info(f"peers not found")
         sys.exit(1)

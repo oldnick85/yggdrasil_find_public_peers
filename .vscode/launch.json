@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "yggdrasil_find_public_peers.py",
             "args": [
-                "--best", "5", "-v"
+                "--best", "5", "-v", "--rewrite-config-peers"
             ],
             "console": "integratedTerminal",
             "justMyCode": true
