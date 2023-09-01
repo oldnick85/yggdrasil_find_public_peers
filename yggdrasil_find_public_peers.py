@@ -32,6 +32,7 @@ class Settings:
     ping_interval : float = 0
     rewrite_config_peers : bool = False
     yggdrasil_peers_json : str = ""
+    yggdrasil_conf : str = ""
 
 @dataclass(frozen=True)
 class PeerData:
@@ -204,13 +205,17 @@ def best_peers(ping_statistics : list[PeerStatistic], best : int) -> list[PeerSt
         logger.debug(f"  {best_peer}")
     return [p.peer for p in best_peers]
 
-def find_public_peers(settings : Settings) -> list[PeerData]:
-    logger.info(f"find public peers with {settings}")
+def get_all_public_peers(settings : Settings) -> list[PeerData]:
+    logger.info(f"get public peers with {settings}")
     peers = get_peers_from_git()
     if (len(peers) == 0):
         peers = get_peers_from_json(settings.yggdrasil_peers_json)
     else:
         save_peers_to_json(settings.yggdrasil_peers_json, peers)
+    return peers
+
+def find_best_public_peers(settings : Settings, peers : list[PeerData]) -> list[PeerData]:
+    logger.info(f"find public peers with {settings}")
     if (len(peers) != 0):
         ping_statistic = ping_peers(peers, settings)
         peers = best_peers(ping_statistic, settings.best_count)
@@ -223,13 +228,13 @@ def yggdrasil_conf_has_peers(yggdrasil_conf_filename : str) -> bool:
     return (len(peers) != 0)
 
 def save_to_yggdrasil_conf(yggdrasil_conf_filename : str, peers : list[PeerData]) -> None:
+    if (len(yggdrasil_conf_filename) == 0):
+        return
     with open(yggdrasil_conf_filename, "r") as file:
         conf = hjson.load(file)
-
     conf["Peers"] : list[str] = []
     for peer in peers:
         conf["Peers"].append(peer.url)
-
     with open(yggdrasil_conf_filename, "w") as file:
         hjson.dump(conf, file)
     return
@@ -274,23 +279,25 @@ def main() -> None:
     settings = Settings(parallel=args.parallel, pings=args.pings, \
                         best_count=args.best, ping_interval=args.ping_interval, \
                         rewrite_config_peers=args.rewrite_config_peers, \
-                        yggdrasil_peers_json=args.yggdrasil_peers_json)
-    if (len(args.yggdrasil_conf) != 0):
+                        yggdrasil_peers_json=args.yggdrasil_peers_json, \
+                        yggdrasil_conf=args.yggdrasil_conf)
+    if (len(settings.yggdrasil_conf) != 0):
         if (not settings.rewrite_config_peers):
-            if (yggdrasil_conf_has_peers(args.yggdrasil_conf)):
-                logger.warning(f"config {args.yggdrasil_conf} already has not empty public peers list")
+            if (yggdrasil_conf_has_peers(settings.yggdrasil_conf)):
+                logger.warning(f"config {settings.yggdrasil_conf} already has not empty public peers list")
                 sys.exit(0)
-    peers = find_public_peers(settings)
-    if (len(peers) == 0):
-        logger.info(f"peers not found")
-        sys.exit(1)
-    else:
-        logger.info(f"best peers:")
-        for peer in peers:
-            logger.info(f"  {peer}")
-        if (len(args.yggdrasil_conf) != 0):
+    peers = get_all_public_peers(settings)
+    if (len(settings.yggdrasil_conf) != 0):
+        peers = find_best_public_peers(settings, peers)
+        if (len(peers) == 0):
+            logger.info(f"peers not found")
+            sys.exit(1)
+        else:
+            logger.info(f"best peers:")
+            for peer in peers:
+                logger.info(f"  {peer}")
             try:
-                save_to_yggdrasil_conf(args.yggdrasil_conf, peers)
+                save_to_yggdrasil_conf(settings.yggdrasil_conf, peers)
             except:
                 sys.exit(1)
     sys.exit(0)
