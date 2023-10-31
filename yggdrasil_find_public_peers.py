@@ -29,6 +29,7 @@ class Settings:
     parallel : int = 0
     pings : int = 0
     best_count : int = 0
+    max_from_country : int = 0
     ping_interval : float = 0
     rewrite_config_peers : bool = False
     yggdrasil_peers_json : str = ""
@@ -195,11 +196,26 @@ def ping_peers(peers : list[PeerData], settings : Settings) -> list[PeerStatisti
         pbar.close()
     return ping_statistic
 
-def best_peers(ping_statistics : list[PeerStatistic], best : int) -> list[PeerStatistic]:
+def best_peers(ping_statistics : list[PeerStatistic], best : int, max_from_country : int) -> list[PeerStatistic]:
     best_peers = [ping_statistic for ping_statistic in ping_statistics if ping_statistic.ping_success()]
     logger.info(f"success ping {len(best_peers)} peers")
     best_peers.sort()
-    best_peers = best_peers[0:best]
+    if (max_from_country <= 0):
+        best_peers = best_peers[0:best]
+    else:
+        countries : dict[str, int] = {}
+        tmp_best_peers : list[PeerStatistic] = []
+        for peer in best_peers:
+            if peer.peer.country in countries:
+                countries[peer.peer.country] += 1
+                if countries[peer.peer.country] > max_from_country:
+                    continue
+            else:
+                countries[peer.peer.country] = 1
+            tmp_best_peers.append(peer)
+            if len(tmp_best_peers) >= best:
+                break
+        best_peers = tmp_best_peers
     logger.debug(f"found {len(best_peers)} best pings")
     for best_peer in best_peers:
         logger.debug(f"  {best_peer}")
@@ -218,7 +234,7 @@ def find_best_public_peers(settings : Settings, peers : list[PeerData]) -> list[
     logger.info(f"find public peers with {settings}")
     if (len(peers) != 0):
         ping_statistic = ping_peers(peers, settings)
-        peers = best_peers(ping_statistic, settings.best_count)
+        peers = best_peers(ping_statistic, settings.best_count, settings.max_from_country)
     return peers
 
 def yggdrasil_conf_has_peers(yggdrasil_conf_filename : str) -> bool:
@@ -247,6 +263,8 @@ def get_arguments() -> argparse.Namespace:
         type=int, default=5, help='Number of ping packets for one peer')
     parser.add_argument('--best', dest='best', metavar='BEST', \
         type=int, default=5, help='Number of best peers to choose')
+    parser.add_argument('--max-from-country', dest='max_from_country', metavar='MAX_COUNTRY', \
+        type=int, default=0, help='Maximum number of peers from one country')
     parser.add_argument('--ping-interval', dest='ping_interval', metavar='PING_INTERVAL', \
         type=float, default=0.1, help='Interval betveen pings for one peer in seconds')
     parser.add_argument("-v", dest='verbose', help="Print extra logs",
@@ -276,8 +294,11 @@ def main() -> None:
 
     set_logger_level(args)
 
-    settings = Settings(parallel=args.parallel, pings=args.pings, \
-                        best_count=args.best, ping_interval=args.ping_interval, \
+    settings = Settings(parallel=args.parallel, \
+                        pings=args.pings, \
+                        best_count=args.best, \
+                        max_from_country=args.max_from_country, \
+                        ping_interval=args.ping_interval, \
                         rewrite_config_peers=args.rewrite_config_peers, \
                         yggdrasil_peers_json=args.yggdrasil_peers_json, \
                         yggdrasil_conf=args.yggdrasil_conf)

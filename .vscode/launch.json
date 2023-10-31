@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "yggdrasil_find_public_peers.py",
             "args": [
-                "--best", "5", "-v", "--rewrite-config-peers", "--yggdrasil-peers-json", "yggdrasil-peers.json"
+                "--best", "5", "-v", "--max-from-country", "3", "--rewrite-config-peers", "--yggdrasil-peers-json", "yggdrasil-peers.json"
             ],
             "console": "integratedTerminal",
             "justMyCode": true
