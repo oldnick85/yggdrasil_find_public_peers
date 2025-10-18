@@ -88,12 +88,17 @@ class ProcessingPeer:
     peer_statistic : PeerStatistic
     process : subprocess.Popen
 
-def parse_md_line(s : str) -> list[str] | None:
+@dataclass(frozen=True)
+class UrlAddress:
+    url : str
+    address : str
+
+def parse_md_line(s : str) -> UrlAddress | None:
     m = re.search(r"\s*\* `(tls:\/\/|tcp:\/\/)([\d\.\[\]a-zA-Z:-]+)(:\d+.*)`", s)
     if (m):
         url = m.group(1) + m.group(2) + m.group(3)
         address = m.group(2).strip("[]")
-        return [url, address]
+        return UrlAddress(url=url, address=address)
     return None
 
 def parse_md(filename : str, word_part : str, country : str) -> list[PeerData]:
@@ -102,9 +107,8 @@ def parse_md(filename : str, word_part : str, country : str) -> list[PeerData]:
         for line in file:
             s = line.rstrip()
             ua = parse_md_line(s)
-            if (ua):
-                url, address = ua
-                peers.append(PeerData(address, url, word_part, country))
+            if ua is not None:
+                peers.append(PeerData(ua.address, ua.url, word_part, country))
     return peers
 
 def get_peers_from_json(json_filename : str) -> list[PeerData]:
@@ -162,8 +166,7 @@ def get_peers_from_git() -> list[PeerData]:
 def ping_peers(peers : list[PeerData], settings : Settings) -> list[PeerStatistic]:
     ping_statistic = [PeerStatistic(peer=p) for p in peers]
     ping_waiting = ping_statistic.copy()
-    if (logger.getEffectiveLevel() == logging.INFO):
-        pbar = tqdm(total=len(ping_waiting))
+    pbar = tqdm(total=len(ping_waiting)) if (logger.getEffectiveLevel() == logging.INFO) else None
     processing : list[ProcessingPeer] = []
     while ((len(ping_waiting) != 0) or (len(processing) != 0)):
         if ((len(processing) < settings.parallel) and (len(ping_waiting) != 0)):
@@ -183,20 +186,20 @@ def ping_peers(peers : list[PeerData], settings : Settings) -> list[PeerStatisti
             elif (poll != 0):
                 logger.debug(f"ping done {peer_stat} with error")
                 peer_stat.error = poll
-                if (logger.getEffectiveLevel() == logging.INFO):
+                if pbar is not None:
                     pbar.update()
             else:
                 output_str = process.communicate()[0].decode("utf-8")
                 peer_stat.parse_ping_output(output_str)
                 logger.debug(f"ping done {peer_stat}")
-                if (logger.getEffectiveLevel() == logging.INFO):
+                if pbar is not None:
                     pbar.update()
         processing = processing_working
-    if (logger.getEffectiveLevel() == logging.INFO):
+    if pbar is not None:
         pbar.close()
     return ping_statistic
 
-def best_peers(ping_statistics : list[PeerStatistic], best : int, max_from_country : int) -> list[PeerStatistic]:
+def best_peers(ping_statistics : list[PeerStatistic], best : int, max_from_country : int) -> list[PeerData]:
     best_peers = [ping_statistic for ping_statistic in ping_statistics if ping_statistic.ping_success()]
     logger.info(f"success ping {len(best_peers)} peers")
     best_peers.sort()
@@ -248,7 +251,7 @@ def save_to_yggdrasil_conf(yggdrasil_conf_filename : str, peers : list[PeerData]
         return
     with open(yggdrasil_conf_filename, "r") as file:
         conf = hjson.load(file)
-    conf["Peers"] : list[str] = []
+    conf["Peers"] = []
     for peer in peers:
         conf["Peers"].append(peer.url)
     with open(yggdrasil_conf_filename, "w") as file:
