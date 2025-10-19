@@ -26,6 +26,9 @@ logger = get_logger("YFPP")
 
 @dataclass(frozen=True)
 class Settings:
+    force : bool = False
+    quiet : bool = False
+    verbose : bool = False
     parallel : int = 0
     pings : int = 0
     best_count : int = 0
@@ -34,6 +37,9 @@ class Settings:
     rewrite_config_peers : bool = False
     yggdrasil_peers_json : str = ""
     yggdrasil_conf : str = ""
+    repo_url : str = "https://github.com/yggdrasil-network/public-peers"
+
+settings = Settings()
 
 @dataclass(frozen=True)
 class PeerData:
@@ -241,10 +247,14 @@ def find_best_public_peers(settings : Settings, peers : list[PeerData]) -> list[
     return peers
 
 def yggdrasil_conf_has_peers(yggdrasil_conf_filename : str) -> bool:
-    with open(yggdrasil_conf_filename, "r") as file:
-        conf = hjson.load(file)
-    peers = conf.get("Peers", [])
-    return (len(peers) != 0)
+    try:
+        with open(yggdrasil_conf_filename, "r") as file:
+            conf = hjson.load(file)
+        peers = conf.get("Peers", [])
+        return (len(peers) != 0)
+    except:
+        logger.warning(f"Can not open file {yggdrasil_conf_filename}")
+    return False
 
 def save_to_yggdrasil_conf(yggdrasil_conf_filename : str, peers : list[PeerData]) -> None:
     if (len(yggdrasil_conf_filename) == 0):
@@ -276,17 +286,48 @@ def get_arguments() -> argparse.Namespace:
         action="store_true")
     parser.add_argument("--rewrite-config-peers", dest='rewrite_config_peers', help="Rewrite existing peers in config",
         action="store_true")
+    parser.add_argument("--force", dest='force', help="Find peers anyway",
+        action="store_true")
     parser.add_argument('--yggdrasil-conf', dest='yggdrasil_conf', metavar='YGGDRASIL_CONF', \
         type=str, default="yggdrasil.conf", help='Save best peers to existing yggdrasil configuration file')
     parser.add_argument('--yggdrasil-peers-json', dest='yggdrasil_peers_json', metavar='YGGDRASIL_PEERS_JSON', \
         type=str, default="", help='Save all peers from git to file')
+    parser.add_argument('--repo-url', dest='repo_url', metavar='REPO_URL',
+        type=str, default="https://github.com/yggdrasil-network/public-peers",
+        help='Custom repository URL with peers addresses')
     return parser.parse_args()
 
-def set_logger_level(args : argparse.Namespace) -> None:
-    if (args.quiet):
+def validate_settings(args: argparse.Namespace) -> bool:
+    global settings
+    settings = Settings(force=args.force, \
+                        quiet=args.quiet, \
+                        verbose=args.verbose, \
+                        parallel=args.parallel, \
+                        pings=args.pings, \
+                        best_count=args.best, \
+                        max_from_country=args.max_from_country, \
+                        ping_interval=args.ping_interval, \
+                        rewrite_config_peers=args.rewrite_config_peers, \
+                        yggdrasil_peers_json=args.yggdrasil_peers_json, \
+                        yggdrasil_conf=args.yggdrasil_conf, \
+                        repo_url=args.repo_url)
+    
+    if settings.yggdrasil_conf:
+        if not os.access(settings.yggdrasil_conf, os.W_OK):
+            logger.error(f"Can not open file {settings.yggdrasil_conf}")
+            return False
+    else:
+        if not settings.force:
+            logger.error(f"No config file is set")
+            return False
+    
+    return True
+
+def set_logger_level() -> None:
+    if (settings.quiet):
         logger.setLevel(logging.WARNING)
     else:
-        if (args.verbose):
+        if (settings.verbose):
             logger.setLevel(logging.DEBUG)
         else:
             logger.setLevel(logging.INFO)
@@ -295,35 +336,34 @@ def set_logger_level(args : argparse.Namespace) -> None:
 def main() -> None:
     args = get_arguments()
 
-    set_logger_level(args)
+    if (not validate_settings(args)):
+        sys.exit(1)
 
-    settings = Settings(parallel=args.parallel, \
-                        pings=args.pings, \
-                        best_count=args.best, \
-                        max_from_country=args.max_from_country, \
-                        ping_interval=args.ping_interval, \
-                        rewrite_config_peers=args.rewrite_config_peers, \
-                        yggdrasil_peers_json=args.yggdrasil_peers_json, \
-                        yggdrasil_conf=args.yggdrasil_conf)
+    set_logger_level()
+
     if (len(settings.yggdrasil_conf) != 0):
         if (not settings.rewrite_config_peers):
             if (yggdrasil_conf_has_peers(settings.yggdrasil_conf)):
                 logger.warning(f"config {settings.yggdrasil_conf} already has not empty public peers list")
-                sys.exit(0)
+                if (not settings.force):
+                    sys.exit(0)
+
     peers = get_all_public_peers(settings)
-    if (len(settings.yggdrasil_conf) != 0):
-        peers = find_best_public_peers(settings, peers)
-        if (len(peers) == 0):
-            logger.info(f"peers not found")
-            sys.exit(1)
-        else:
-            logger.info(f"best peers:")
-            for peer in peers:
-                logger.info(f"  {peer}")
-            try:
+
+    peers = find_best_public_peers(settings, peers)
+    if (len(peers) == 0):
+        logger.info(f"peers not found")
+        sys.exit(1)
+    else:
+        logger.info(f"best peers:")
+        for peer in peers:
+            logger.info(f"  {peer}")
+        try:
+            if (settings.yggdrasil_conf):
                 save_to_yggdrasil_conf(settings.yggdrasil_conf, peers)
-            except:
-                sys.exit(1)
+        except:
+            sys.exit(1)
+
     sys.exit(0)
 
 if __name__ == '__main__':
