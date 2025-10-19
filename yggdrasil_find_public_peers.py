@@ -251,7 +251,7 @@ def get_peers_from_git() -> list[PeerData]:
             
         # Parse peer files from all regional directories
         os.chdir("public-peers")
-        directories = ["africa", "asia", "europe", "mena", "north-america", "south-america"]
+        directories = ["africa", "asia", "europe", "mena", "north-america", "oceania", "south-america"]
         
         for directory in directories:
             if os.path.exists(directory):
